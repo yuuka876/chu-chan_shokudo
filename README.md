@@ -1,1 +1,0 @@
-# chu-chan_shokudo
