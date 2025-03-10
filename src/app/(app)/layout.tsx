@@ -25,6 +25,9 @@ export default function AppLayout({
           <a href="/admin/reservations" className="block p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
             予約管理
           </a>
+          <a href="/admin/line" className="block p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
+            LINE連携
+          </a>
         </nav>
       </aside>
       <main className="flex-1 p-8">{children}</main>

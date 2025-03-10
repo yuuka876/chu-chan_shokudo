@@ -1,168 +1,112 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { prisma } from '@/lib/services/menu-service';
+import { cookies } from 'next/headers';
+import { formatDate } from '@/lib/utils';
+import { calendarService } from '@/lib/services/calendar-service';
 
 // 営業時間の型定義
 interface BusinessHour {
-  day: string;
-  isOpen: boolean;
-  openTime: string;
-  closeTime: string;
-  lunchStart: string;
-  lunchEnd: string;
-  dinnerStart: string;
-  dinnerEnd: string;
-  breakTime?: {
-    start: string;
-    end: string;
-  };
+  date: string;
+  isHoliday: boolean;
+  startTime: string;
+  endTime: string;
+  memo?: string;
 }
 
-// 現在は仮のデータを使用（実際にはデータベースから取得）
-const defaultBusinessHours: BusinessHour[] = [
-  {
-    day: "月曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "21:00",
-    lunchStart: "11:30",
-    lunchEnd: "14:00",
-    dinnerStart: "17:30",
-    dinnerEnd: "21:00",
-    breakTime: {
-      start: "14:00",
-      end: "17:30"
-    }
-  },
-  {
-    day: "火曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "21:00",
-    lunchStart: "11:30",
-    lunchEnd: "14:00",
-    dinnerStart: "17:30",
-    dinnerEnd: "21:00",
-    breakTime: {
-      start: "14:00",
-      end: "17:30"
-    }
-  },
-  {
-    day: "水曜日",
-    isOpen: false,
-    openTime: "",
-    closeTime: "",
-    lunchStart: "",
-    lunchEnd: "",
-    dinnerStart: "",
-    dinnerEnd: ""
-  },
-  {
-    day: "木曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "21:00",
-    lunchStart: "11:30",
-    lunchEnd: "14:00",
-    dinnerStart: "17:30",
-    dinnerEnd: "21:00",
-    breakTime: {
-      start: "14:00",
-      end: "17:30"
-    }
-  },
-  {
-    day: "金曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "22:00",
-    lunchStart: "11:30",
-    lunchEnd: "14:00",
-    dinnerStart: "17:30",
-    dinnerEnd: "22:00",
-    breakTime: {
-      start: "14:00",
-      end: "17:30"
-    }
-  },
-  {
-    day: "土曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "22:00",
-    lunchStart: "11:30",
-    lunchEnd: "14:00",
-    dinnerStart: "17:00",
-    dinnerEnd: "22:00",
-    breakTime: {
-      start: "14:00",
-      end: "17:00"
-    }
-  },
-  {
-    day: "日曜日",
-    isOpen: true,
-    openTime: "11:00",
-    closeTime: "21:00",
-    lunchStart: "11:30",
-    lunchEnd: "15:00",
-    dinnerStart: "17:30",
-    dinnerEnd: "21:00",
-    breakTime: {
-      start: "15:00",
-      end: "17:30"
-    }
-  }
-];
-
-// GET: 営業時間を取得
-export async function GET(req: NextRequest) {
+// GET: 特定の年月の営業時間を取得
+export async function GET(request: NextRequest) {
   try {
-    // 実際のアプリではデータベースから取得
-    return NextResponse.json({ businessHours: defaultBusinessHours });
-  } catch (error) {
-    console.error('営業時間取得エラー:', error);
-    return NextResponse.json(
-      { error: '営業時間の取得中にエラーが発生しました' },
-      { status: 500 }
-    );
-  }
-}
-
-// PUT: 営業時間を更新（管理者のみ）
-export async function PUT(req: NextRequest) {
-  try {
-    const { userId } = await auth();
+    const url = new URL(request.url);
+    const yearParam = url.searchParams.get('year');
+    const monthParam = url.searchParams.get('month');
     
-    // 管理者かどうかのチェック
-    if (!userId) {
-      return NextResponse.json({ error: '認証が必要です' }, { status: 401 });
-    }
-    
-    // TODO: 実際のアプリでは、ここで管理者権限をチェックする
-    
-    const body = await req.json();
-    const { businessHours } = body;
-    
-    if (!businessHours || !Array.isArray(businessHours)) {
+    if (!yearParam || !monthParam) {
       return NextResponse.json(
-        { error: '無効なデータ形式です' },
+        { success: false, error: '年と月を指定してください' },
         { status: 400 }
       );
     }
     
-    // 実際のアプリではデータベースに保存
-    // ここでは成功レスポンスを返すだけ
+    const year = parseInt(yearParam);
+    const month = parseInt(monthParam);
+    
+    if (isNaN(year) || isNaN(month)) {
+      return NextResponse.json(
+        { success: false, error: '年と月は数値で指定してください' },
+        { status: 400 }
+      );
+    }
+    
+    const businessHours = await calendarService.getBusinessDays(year, month);
     
     return NextResponse.json({
-      message: '営業時間が更新されました',
+      success: true,
       businessHours
     });
   } catch (error) {
-    console.error('営業時間更新エラー:', error);
+    console.error('営業時間取得エラー:', error);
     return NextResponse.json(
-      { error: '営業時間の更新中にエラーが発生しました' },
+      { success: false, error: '営業時間の取得に失敗しました' },
       { status: 500 }
     );
+  }
+}
+
+// POST: 営業時間を設定
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { date, startTime, endTime, isHoliday } = body;
+    
+    if (!date) {
+      return NextResponse.json(
+        { success: false, error: '日付を指定してください' },
+        { status: 400 }
+      );
+    }
+    
+    const businessHours = {
+      date: new Date(date),
+      startTime: startTime || '08:00',
+      endTime: endTime || '20:00',
+      isHoliday: isHoliday || false
+    };
+    
+    const success = await calendarService.setBusinessDay(businessHours);
+    
+    if (!success) {
+      return NextResponse.json(
+        { success: false, error: '営業時間の設定に失敗しました' },
+        { status: 500 }
+      );
+    }
+    
+    return NextResponse.json({
+      success: true,
+      message: '営業時間を設定しました',
+      businessHours
+    });
+  } catch (error) {
+    console.error('営業時間設定エラー:', error);
+    return NextResponse.json(
+      { success: false, error: '営業時間の設定に失敗しました' },
+      { status: 500 }
+    );
+  }
+}
+
+// 管理者権限をチェックする関数
+async function checkAdminPermission(userId: string): Promise<boolean> {
+  try {
+    // ユーザー情報を取得
+    const user = await prisma.uSER_TBL.findUnique({
+      where: { userId }
+    });
+    
+    // 管理者フラグをチェック
+    return user?.isAdmin === true;
+  } catch (error) {
+    console.error('管理者権限チェックエラー:', error);
+    return false;
   }
 }

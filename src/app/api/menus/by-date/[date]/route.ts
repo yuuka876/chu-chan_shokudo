@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { prisma } from '@/lib/services/menu-service';
+import { cookies } from 'next/headers';
 import { menuService } from '@/lib/services/menu-service';
 
 interface Params {
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       );
     }
     
-    const menus = menuService.getMenuItems(new Date(date), mealType);
+    const menus = await menuService.getMenuItems(new Date(date), mealType);
     const timeSlots = menuService.getAvailableTimeSlots(new Date(date));
     
     return NextResponse.json({ date, menus, timeSlots });
@@ -93,4 +94,4 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       { status: 500 }
     );
   }
-}
+} 

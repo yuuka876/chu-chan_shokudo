@@ -3,21 +3,17 @@
 import { useState, useEffect } from 'react';
 import { MenuItem, TimeSlot, menuService } from '@/lib/services/menu-service';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useUser } from '@clerk/nextjs';
+import { useLineAuth } from '@/lib/line-auth';
 import { useRouter } from 'next/navigation';
+import { toast } from 'react-hot-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
+import { ApiResponse } from '@/types/menu';
+import { UserProfile } from '@/types/user';
 
 interface MenuReservationProps {
   selectedDate: Date | null;
   onReservationComplete?: () => void; // 予約完了時のコールバック
-}
-
-// APIレスポンスの型定義
-interface ApiResponse {
-  success?: boolean;
-  message?: string;
-  error?: string;
-  details?: any;
-  reservation?: any;
 }
 
 export default function MenuReservation({ selectedDate, onReservationComplete }: MenuReservationProps) {
@@ -28,36 +24,37 @@ export default function MenuReservation({ selectedDate, onReservationComplete }:
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPendingReservation, setIsPendingReservation] = useState(false); // 保留中の予約フラグ
+  const [reservedMenus, setReservedMenus] = useState<MenuItem[]>([]);
+  const [hasReservedMenu, setHasReservedMenu] = useState(false);
+  const [isLoadingReservedMenus, setIsLoadingReservedMenus] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   
   const router = useRouter();
   
   // ユーザーの認証状態を確認
-  const { isSignedIn, user } = useUser();
-  const [lineUser, setLineUser] = useState<{ id: string; name: string; picture: string } | null>(null);
-  
-  // クッキーからLINEユーザー情報を取得
-  useEffect(() => {
-    const getCookie = (name: string) => {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
-      return null;
-    };
-
-    const lineUserId = getCookie('line_user_id');
-    const lineDisplayName = getCookie('line_display_name');
-
-    if (lineUserId && lineDisplayName) {
-      setLineUser({
-        id: lineUserId,
-        name: lineDisplayName,
-        picture: ''
-      });
-    }
-  }, []);
+  const { isAuthenticated, user } = useLineAuth();
   
   // ログイン状態の確認
-  const isAuthenticated = isSignedIn || lineUser !== null;
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (!isAuthenticated) {
+        // 未ログインの場合は、現在のセッションに選択した情報を保存
+        sessionStorage.setItem('pendingReservation', JSON.stringify({
+          date: selectedDate,
+          menuId: selectedMenuItem?.menuNo
+        }));
+        
+        // ログインページにリダイレクト
+        router.push('/auth/sign-in');
+      }
+    };
+    
+    // 最終的な予約確定時だけチェック
+    if (isConfirmModalOpen) {
+      checkAuth();
+    }
+  }, [isConfirmModalOpen, isAuthenticated, router, selectedDate, selectedMenuItem]);
   
   // ログイン後に保存された予約情報を復元して予約確認モーダルを表示
   useEffect(() => {
@@ -82,102 +79,106 @@ export default function MenuReservation({ selectedDate, onReservationComplete }:
           const pendingReservation = JSON.parse(pendingReservationStr);
           console.log('パース済み予約情報:', pendingReservation);
           
-          // 日付の復元
+          // 予約情報を復元
           if (pendingReservation.date) {
             const reservationDate = new Date(pendingReservation.date);
-            console.log('日付比較:', 
-              '保存日付:', reservationDate, 
-              '現在選択日付:', selectedDate,
-              '一致:', selectedDate && reservationDate.getTime() === selectedDate.getTime()
-            );
-            
-            // 選択日付がなければ、自動的に復元する
-            if (!selectedDate) {
-              // ここでは直接モーダルを表示せず、ホームページのコンポーネントに日付選択を任せる
-              console.log('選択日付がないため、復元しません - ホームページで処理されるはず');
-              return;
-            }
-            
-            if (selectedDate) {
-              console.log('時間スロット:', timeSlots.length, '個検出');
-              
-              // 時間スロットの復元
-              if (pendingReservation.timeSlotId && timeSlots.length > 0) {
-                const timeSlot = timeSlots.find(slot => slot.id === pendingReservation.timeSlotId);
-                console.log('該当する時間スロット:', timeSlot);
-                
-                if (timeSlot) {
-                  setSelectedTimeSlot(timeSlot);
-                  
-                  // 選択された時間に基づいてメニュー項目を読み込む
-                  const items = menuService.getMenuItems(selectedDate, timeSlot.mealType);
-                  console.log('メニュー項目:', items.length, '個読み込み');
-                  setMenuItems(items);
-                  
-                  // メニューアイテムの復元
-                  if (pendingReservation.menuItemId && items.length > 0) {
-                    const menuItem = items.find(item => item.id === pendingReservation.menuItemId);
-                    console.log('該当するメニュー項目:', menuItem);
-                    
-                    if (menuItem) {
-                      setSelectedMenuItem(menuItem);
-                      
-                      // すべての情報が揃ったらモーダルを表示（マウント状態を確認）
-                      console.log('全ての情報が揃いました - モーダル表示を準備');
-                      const timerId = setTimeout(() => {
-                        if (isMounted) {
-                          console.log('モーダルを表示します');
-                          setIsConfirmModalOpen(true);
-                          // ここではセッションストレージを消去しない
-                          // モーダルが表示された後、予約確定したタイミングで消去する
-                        }
-                      }, 1000); // 遅延を少し長くして確実に表示
-                      
-                      // クリーンアップ時にタイマーをクリア
-                      return () => {
-                        clearTimeout(timerId);
-                      };
-                    }
-                  }
-                }
-              }
-            }
+            console.log('復元する日付:', reservationDate);
           }
+          
+          if (pendingReservation.timeSlot) {
+            setSelectedTimeSlot(pendingReservation.timeSlot);
+            console.log('復元する時間枠:', pendingReservation.timeSlot);
+          }
+          
+          if (pendingReservation.menuItem) {
+            setSelectedMenuItem(pendingReservation.menuItem);
+            console.log('復元するメニュー:', pendingReservation.menuItem);
+          }
+          
+          // 予約確認モーダルを表示
+          setIsConfirmModalOpen(true);
         } catch (error) {
-          console.error('予約情報の復元中にエラーが発生しました:', error);
+          console.error('予約情報の復元に失敗:', error);
+          sessionStorage.removeItem('pendingReservation');
         }
       }
     }
     
-    // クリーンアップ関数
     return () => {
       isMounted = false;
     };
-  }, [isAuthenticated, selectedDate, timeSlots, menuService]);
+  }, [isAuthenticated, isPendingReservation, selectedDate]);
   
   useEffect(() => {
     if (selectedDate) {
-      // 選択した日付の予約可能時間を取得
-      const availableSlots = menuService.getAvailableTimeSlots(selectedDate);
-      setTimeSlots(availableSlots);
+      // 選択した日付の予約可能時間をAPIから取得
+      const fetchAvailableTimeSlots = async () => {
+        try {
+          const dateStr = selectedDate.toISOString().split('T')[0];
+          const response = await fetch(`/api/time-slots/${dateStr}`);
+          if (!response.ok) {
+            throw new Error('時間枠の取得に失敗しました');
+          }
+          const data = await response.json();
+          setTimeSlots(data.timeSlots);
+        } catch (error) {
+          console.error('時間枠取得エラー:', error);
+          toast.error('予約可能な時間枠の取得に失敗しました');
+          setTimeSlots([]);
+        }
+      };
+      
+      fetchAvailableTimeSlots();
       
       // 時間スロットが変更されたら選択をリセット
       setSelectedTimeSlot(null);
       setMenuItems([]);
       setSelectedMenuItem(null);
+      
+      // 選択した日付の予約済みメニューを取得
+      fetchReservedMenus(selectedDate);
     }
   }, [selectedDate]);
   
-  const handleTimeSlotSelect = (timeSlot: TimeSlot) => {
+  // 選択した日付の予約済みメニューを取得
+  const fetchReservedMenus = async (date: Date) => {
+    try {
+      setIsLoadingReservedMenus(true);
+      const menus = await menuService.getReservedMenusForDate(date);
+      setReservedMenus(menus);
+      setHasReservedMenu(menus.length > 0);
+    } catch (error) {
+      console.error('予約済みメニュー取得エラー:', error);
+    } finally {
+      setIsLoadingReservedMenus(false);
+    }
+  };
+  
+  const handleTimeSlotSelect = async (timeSlot: TimeSlot) => {
     if (!timeSlot.available) return;
     
     setSelectedTimeSlot(timeSlot);
     
     // 選択した時間帯に応じたメニューを取得
     if (selectedDate) {
-      const items = menuService.getMenuItems(selectedDate, timeSlot.mealType);
-      setMenuItems(items);
-      setSelectedMenuItem(null);
+      // 予約済みメニューがある場合は、そのメニューのみを表示
+      if (hasReservedMenu) {
+        // 選択した時間帯に合致する予約済みメニューをフィルタリング
+        const filteredMenus = reservedMenus.filter(menu => menu.availability === timeSlot.mealType);
+        setMenuItems(filteredMenus);
+        
+        // 予約済みメニューが1つだけの場合は自動選択
+        if (filteredMenus.length === 1) {
+          setSelectedMenuItem(filteredMenus[0]);
+        } else {
+          setSelectedMenuItem(null);
+        }
+      } else {
+        // 予約済みメニューがない場合は通常通り全メニューを表示
+        const items = await menuService.getMenuItems(selectedDate, timeSlot.mealType);
+        setMenuItems(items);
+        setSelectedMenuItem(null);
+      }
     }
   };
   
@@ -214,67 +215,274 @@ export default function MenuReservation({ selectedDate, onReservationComplete }:
   
   // 最終的な予約処理
   const handleFinalReservation = async () => {
+    if (!selectedDate || !selectedTimeSlot || !selectedMenuItem) return;
+    
     try {
-      // メニュー番号を生成（日付と選択したメニューアイテムのIDを使用）
-      const year = selectedDate!.getFullYear();
-      const month = String(selectedDate!.getMonth() + 1).padStart(2, '0');
-      const day = String(selectedDate!.getDate()).padStart(2, '0');
-      const menuId = String(selectedMenuItem?.id).padStart(4, '0');
-      const menuNo = `${year}${month}${day}${menuId}`;
+      setIsPendingReservation(false);
+      setErrorMessage(null);
       
-      // 予約情報をAPIに送信
-      console.log('予約APIを呼び出します:', { menuNo, reservationTime: selectedTimeSlot?.label });
+      // ユーザーIDを取得
+      let userId = '';
+      if (isAuthenticated && user) {
+        userId = user.id;
+      } else {
+        throw new Error('ユーザー情報が見つかりません');
+      }
+      
+      // 予約情報を作成
+      const reservationData = {
+        menuId: selectedMenuItem.id,
+        userId: userId,
+        reservationTime: selectedTimeSlot.time,
+        date: selectedDate.toISOString()
+      };
+      
+      // 予約APIを呼び出す
       const response = await fetch('/api/reservations', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          menuNo,
-          reservationTime: selectedTimeSlot?.label,
-        }),
+        body: JSON.stringify(reservationData)
       });
       
-      const data = await response.json() as ApiResponse;
-      console.log('APIレスポンス:', data);
+      const data: ApiResponse = await response.json();
       
-      if (!response.ok) {
-        const errorDetails = typeof data.details === 'object' 
-          ? JSON.stringify(data.details, null, 2)
-          : data.details;
-        
-        const errorMessage = data.details 
-          ? `${data.error}\n詳細: ${errorDetails}`
-          : data.error || '予約に失敗しました';
-        
-        throw new Error(errorMessage);
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || data.message || '予約に失敗しました');
       }
       
-      // 成功メッセージを表示
-      alert(`予約が完了しました！\n日付: ${selectedDate?.toLocaleDateString('ja-JP')}\n時間: ${selectedTimeSlot?.label}\nメニュー: ${selectedMenuItem?.name}`);
-      
-      // 確認モーダルを閉じる
-      setIsConfirmModalOpen(false);
-      
-      // 予約情報が復元された場合、セッションストレージをクリーンアップ
+      // 保存されていた予約情報を削除
       sessionStorage.removeItem('pendingReservation');
       
-      // 予約処理フラグをリセット
-      setIsPendingReservation(false);
-      
-      // 親コンポーネントに予約完了を通知して全てのモーダルを閉じる
+      // 予約完了コールバックを呼び出す
       if (onReservationComplete) {
         onReservationComplete();
       }
-    } catch (error) {
-      console.error('予約エラー詳細:', error);
       
-      // エラーメッセージをステートに保存
-      setErrorMessage(error instanceof Error ? error.message : '不明なエラーが発生しました');
-      
-      // 確認モーダルを閉じる
+      // 予約確認モーダルを閉じる
       setIsConfirmModalOpen(false);
+    } catch (error) {
+      console.error('予約エラー:', error);
+      setErrorMessage(error instanceof Error ? error.message : String(error));
     }
+  };
+
+  // ユーザープロファイル情報を取得
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!isAuthenticated) return;
+      
+      try {
+        setIsLoadingProfile(true);
+        const response = await fetch('/api/user/profile');
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          let errorMessage = `プロファイル取得エラー: ${response.statusText}`;
+          
+          try {
+            // JSONとしてパースを試みる
+            const errorData = JSON.parse(errorText);
+            if (errorData.error) {
+              errorMessage = `プロファイル取得エラー: ${errorData.error}`;
+            }
+          } catch (e) {
+            // テキストとして処理
+            console.warn('エラーレスポンスのパース失敗:', e);
+          }
+          
+          console.error(errorMessage, { status: response.status, body: errorText });
+          setErrorMessage(errorMessage);
+          return;
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+          if (data.data?.profile) {
+            setUserProfile(data.data.profile);
+            console.log('プロファイル読み込み成功:', data.data.profile);
+          } else if (data.data?.userExists === false) {
+            console.log('プロフィールが見つかりません。新規ユーザーと判断します。');
+            // ユーザーが見つからない場合も続行（基本プロフィールで対応）
+          }
+        } else {
+          console.error('プロファイル取得API失敗:', data.error || data.message);
+          setErrorMessage(data.error || data.message || 'プロファイル情報の取得に失敗しました');
+        }
+      } catch (error) {
+        console.error('プロファイル取得エラー:', error);
+        setErrorMessage(error instanceof Error ? error.message : 'プロファイル情報の取得中にエラーが発生しました');
+      } finally {
+        setIsLoadingProfile(false);
+      }
+    };
+    
+    fetchUserProfile();
+  }, [isAuthenticated]);
+
+  // メニュー選択セクションのレンダリング
+  const renderMenuSelection = () => {
+    if (!selectedTimeSlot) return null;
+
+    // 予約済みメニューがある場合の表示
+    if (isLoadingReservedMenus) {
+      return (
+        <div className="py-4 text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+          <p className="mt-2 text-gray-600">予約済みメニューを確認中...</p>
+        </div>
+      );
+    }
+
+    if (hasReservedMenu) {
+      // 選択した時間帯に合致する予約済みメニューをフィルタリング
+      const availableMenus = reservedMenus.filter(menu => menu.availability === selectedTimeSlot.mealType);
+      
+      if (availableMenus.length === 0) {
+        return (
+          <div className="py-4">
+            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-yellow-700">
+                    選択した時間帯に予約可能なメニューがありません。別の時間帯を選択してください。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+      
+      return (
+        <div className="py-4">
+          <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-4 rounded">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm text-blue-700">
+                  この日は既に予約されているメニューがあります。柊人ママは同じ日に複数のメニューを作ることができないため、同じメニューのみ選択可能です。
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <h3 className="text-lg font-medium text-gray-900 mb-2">予約可能なメニュー</h3>
+          <div className="grid grid-cols-1 gap-4">
+            {availableMenus.map(menu => (
+              <div
+                key={menu.id}
+                className={`border rounded-lg p-4 cursor-pointer transition-colors duration-200 ${
+                  selectedMenuItem?.id === menu.id
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                }`}
+                onClick={() => handleMenuItemSelect(menu)}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-medium text-gray-900">{menu.name}</h4>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {(menu as MenuItem).reservedBy ? `予約者: ${(menu as MenuItem).reservedBy}` : ''}
+                    </p>
+                  </div>
+                  {selectedMenuItem?.id === menu.id && (
+                    <div className="bg-blue-500 text-white rounded-full p-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 通常のメニュー選択（予約済みメニューがない場合）
+    return (
+      <div className="space-y-6">
+        {/* ユーザープロファイル情報の表示 */}
+        {userProfile && (userProfile.allergies || userProfile.dislikes) && (
+          <Alert className="bg-amber-50 border-amber-200">
+            <AlertCircle className="h-4 w-4 text-amber-600" />
+            <AlertTitle className="text-amber-800">食事に関する注意事項</AlertTitle>
+            <AlertDescription className="text-amber-700">
+              {userProfile.allergies && (
+                <div className="mt-1">
+                  <span className="font-semibold">アレルギー:</span> {userProfile.allergies}
+                </div>
+              )}
+              {userProfile.dislikes && (
+                <div className="mt-1">
+                  <span className="font-semibold">苦手な食べ物:</span> {userProfile.dislikes}
+                </div>
+              )}
+              <div className="mt-2 text-xs">
+                <span className="font-semibold">※</span> 設定は
+                <button 
+                  onClick={() => router.push('/profile/details')}
+                  className="text-blue-600 underline ml-1"
+                >
+                  プロフィール設定
+                </button>
+                から変更できます
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <h3 className="text-lg font-semibold text-gray-800">メニューを選択</h3>
+        <div className="grid grid-cols-1 gap-4">
+          {menuItems.map(menu => (
+            <div
+              key={menu.id}
+              className={`border rounded-lg p-4 cursor-pointer transition-colors duration-200 ${
+                selectedMenuItem?.id === menu.id
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+              }`}
+              onClick={() => handleMenuItemSelect(menu)}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <h4 className="font-medium text-gray-900">{menu.name}</h4>
+                  <p className="text-sm text-gray-500 mt-1">{menu.description}</p>
+                  {menu.tags && menu.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {menu.tags.map(tag => (
+                        <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedMenuItem?.id === menu.id && (
+                  <div className="bg-blue-500 text-white rounded-full p-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   // 日付が選択されていない場合
@@ -317,45 +525,7 @@ export default function MenuReservation({ selectedDate, onReservationComplete }:
           ))}
         </div>
         
-        {selectedTimeSlot && (
-          <>
-            <h4 className="font-semibold mb-3">メニュー選択</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              {menuItems.map((item) => (
-                <motion.div
-                  key={item.id}
-                  onClick={() => handleMenuItemSelect(item)}
-                  className={`p-4 border rounded-lg cursor-pointer ${
-                    selectedMenuItem?.id === item.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-blue-300'
-                  }`}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <div className="flex justify-between">
-                    <h5 className="font-bold">{item.name}</h5>
-                    <span className="font-bold text-blue-600">{item.price}円</span>
-                  </div>
-                  <p className="text-gray-600 mt-1 text-sm">{item.description}</p>
-                  <div className="mt-2 flex justify-between items-center">
-                    <span className="text-sm text-gray-500">{item.calories}kcal</span>
-                    <div className="flex gap-1">
-                      {item.tags.map((tag, index) => (
-                        <span 
-                          key={index} 
-                          className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </>
-        )}
+        {renderMenuSelection()}
         
         {selectedMenuItem && (
           <motion.button

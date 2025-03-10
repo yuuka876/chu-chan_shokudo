@@ -1,13 +1,16 @@
-export default function DynamicPage({
+export default async function DynamicPage({
   params,
 }: {
   params: { dynamic: string };
 }) {
+  // paramsを使用する前にawaitする
+  const dynamicParam = await params.dynamic;
+  
   return (
     <div className="max-w-3xl mx-auto p-8">
-      <h1 className="text-3xl font-bold mb-6">動的ページ: {params.dynamic}</h1>
+      <h1 className="text-3xl font-bold mb-6">動的ページ: {dynamicParam}</h1>
       <p className="mb-4">
-        このページは動的ルートを使用しています。URLパラメータは <code>{params.dynamic}</code> です。
+        このページは動的ルートを使用しています。URLパラメータは <code>{dynamicParam}</code> です。
       </p>
       <div className="mt-8">
         <a
