@@ -23,14 +23,36 @@ model USER_TBL {
   reservations  RESERVATION_TBL[]
 }
 
-model RESERVATION_TBL {
-  id            String    @id @default(uuid())
-  menuNo        String    // Format: yyyymmdd0001
-  userId        String
-  reservationTime String  // 予約時間
+model MENU_TBL {
+  menuNo        String    @id // Format: yyyymmdd001
+  menuName      String
+  provideDate   DateTime
+  isReserved    Boolean   @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  user          USER_TBL  @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  reservations  RESERVATION_TBL[]
+
+  @@index([provideDate])
+}
+
+model BUSENESS_CARENDER_TBL {
+  date          DateTime  @id
+  startTime     String    // Format: HH:MM
+  endTime       String    // Format: HH:MM
+  isHoliday     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model RESERVATION_TBL {
+  id              String    @id @default(uuid())
+  menuNo          String    
+  userId          String
+  reservationTime String    // 予約時間
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  user            USER_TBL  @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  menu            MENU_TBL  @relation(fields: [menuNo], references: [menuNo], onDelete: Cascade)
   
   @@index([userId])
   @@index([menuNo])
