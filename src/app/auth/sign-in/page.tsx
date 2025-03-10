@@ -1,61 +1,52 @@
 'use client';
 
 import { useEffect } from 'react';
-import { SignIn, useAuth } from "@clerk/nextjs";
-import LineLoginButton from "@/components/ui/LineLoginButton";
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import LineLoginButton from '@/components/LineLoginButton';
+import { useLineAuth } from '@/lib/line-auth';
 
 export default function SignInPage() {
-  const { isSignedIn } = useAuth();
+  const { isAuthenticated, isLoading } = useLineAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get('redirect_url') || '/';
+  const error = searchParams.get('error');
 
-  // ログイン完了後、保存されている予約情報があればホームに戻る
+  // ログイン完了後、リダイレクト先に遷移
   useEffect(() => {
-    if (isSignedIn) {
-      const pendingReservation = sessionStorage.getItem('pendingReservation');
+    if (!isLoading && isAuthenticated) {
+      console.log('ユーザーがログインしました。リダイレクトします:', redirectUrl);
       
-      if (pendingReservation) {
-        console.log('ログイン成功: 保存された予約情報が見つかりました', pendingReservation);
-        
-        // 予約情報はセッションストレージに残しておく
-        // これによりホームページでMenuReservationコンポーネントが
-        // マウントされたときに処理できるようになる
-        
-        // ホームページにリダイレクト
-        router.push('/');
-      }
+      // ホームページに遷移
+      router.push(redirectUrl);
     }
-  }, [isSignedIn, router]);
+  }, [isAuthenticated, isLoading, redirectUrl, router]);
 
   return (
     <div className="flex justify-center items-center min-h-screen p-4">
       <div className="w-full max-w-md">
-        <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
+        <div className="bg-white p-6 rounded-lg shadow-lg">
           <h2 className="text-xl font-bold text-center mb-4">しゅうちゃん食堂 ログイン</h2>
           <p className="text-sm text-gray-600 text-center mb-6">
             予約を完了するにはログインしてください
           </p>
-          <SignIn
-            appearance={{
-              elements: {
-                formButtonPrimary: 'bg-blue-500 hover:bg-blue-600 text-white',
-                footerActionLink: 'text-blue-500 hover:text-blue-600'
-              }
-            }}
-          />
-        </div>
-        
-        <div className="relative mb-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300"></div>
+          
+          {error && (
+            <div className="mb-4 p-2 bg-red-100 text-red-700 rounded">
+              {error === 'missing_code' && 'LINEから認証コードが取得できませんでした。'}
+              {error === 'token_error' && 'LINE認証トークンの取得に失敗しました。'}
+              {error === 'profile_error' && 'LINEプロフィール情報の取得に失敗しました。'}
+              {error === 'unknown' && '不明なエラーが発生しました。もう一度お試しください。'}
+            </div>
+          )}
+          
+          <div className="flex flex-col items-center">
+            <LineLoginButton className="w-full" />
+            
+            <p className="mt-4 text-sm text-gray-500">
+              アカウントをお持ちでない方も、LINEアカウントで簡単に登録できます。
+            </p>
           </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-gray-50 text-gray-500">または</span>
-          </div>
-        </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-lg">
-          <LineLoginButton />
         </div>
       </div>
     </div>

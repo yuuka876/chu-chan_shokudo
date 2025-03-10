@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 async function main() {
   // 既存のデータを削除（オプション）
-  await prisma.uSER_TBL.deleteMany({});
+  await prisma.USER_TBL.deleteMany({});
 
   console.log('既存のデータを削除しました');
 
@@ -28,14 +28,14 @@ async function main() {
   ];
 
   for (const user of users) {
-    const createdUser = await prisma.uSER_TBL.create({
+    const createdUser = await prisma.USER_TBL.create({
       data: user
     });
     console.log(`ユーザーを作成しました: ${createdUser.userName}`);
   }
 
   // 全ユーザーデータを表示
-  const allUsers = await prisma.uSER_TBL.findMany();
+  const allUsers = await prisma.USER_TBL.findMany();
   console.log('全ユーザーデータ:');
   console.log(JSON.stringify(allUsers, null, 2));
 }

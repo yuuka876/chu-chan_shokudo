@@ -45,6 +45,10 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

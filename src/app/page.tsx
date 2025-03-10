@@ -1,44 +1,23 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import CalendarView from "@/components/calendar/calendar-view";
 import MenuForm from "@/components/forms/menu-form";
 import Modal from "@/components/layouts/Modal";
-import { UserButton, useUser } from '@clerk/nextjs';
-import LineLoginButton from '@/components/ui/LineLoginButton';
-import { motion } from 'framer-motion';
+import { useLineAuth } from '@/lib/line-auth';
 import Image from 'next/image';
-import { useAuth } from '@clerk/nextjs';
+import { Button } from '@/components/ui/button';
+import { Settings } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import UserMenu from '@/components/UserMenu';
 
 export default function Home() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [lineUser, setLineUser] = useState<{ id: string; name: string; picture: string } | null>(null);
   const [reservationComplete, setReservationComplete] = useState(false);
+  const router = useRouter();
 
-  const { isSignedIn, user } = useUser();
-
-  // クッキーからLINEユーザー情報を取得（実際のプロジェクトではより安全な方法を使用）
-  useEffect(() => {
-    const getCookie = (name: string) => {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
-      return null;
-    };
-
-    const lineUserId = getCookie('line_user_id');
-    const lineDisplayName = getCookie('line_display_name');
-    const linePictureUrl = getCookie('line_picture_url');
-
-    if (lineUserId && lineDisplayName) {
-      setLineUser({
-        id: lineUserId,
-        name: lineDisplayName,
-        picture: linePictureUrl || ''
-      });
-    }
-  }, []);
+  const { user, isAuthenticated } = useLineAuth();
 
   const handleDateSelect = (date: Date) => {
     setSelectedDate(date);
@@ -65,8 +44,10 @@ export default function Home() {
     }, 500);
   };
 
-  // LINE認証済みかClerk認証済みかチェック
-  const isAuthenticated = isSignedIn || lineUser !== null;
+  // プロファイル設定ページへ移動
+  const navigateToProfileSettings = () => {
+    router.push('/profile/details');
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -82,36 +63,18 @@ export default function Home() {
           </div>
           
           <div className="flex items-center gap-4">
-            {isSignedIn ? (
-              <UserButton afterSignOutUrl="/" />
-            ) : lineUser ? (
-              <div className="flex items-center gap-2">
-                {lineUser.picture && (
-                  <img
-                    src={lineUser.picture}
-                    alt={lineUser.name}
-                    className="w-10 h-10 rounded-full"
-                  />
-                )}
-                <span className="text-sm hidden sm:inline">{lineUser.name}</span>
-                <button
-                  onClick={() => {
-                    // LINEログアウト処理（クッキー削除）
-                    document.cookie = 'line_user_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                    document.cookie = 'line_display_name=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                    document.cookie = 'line_picture_url=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                    window.location.reload();
-                  }}
-                  className="text-sm text-red-500 hover:text-red-700"
-                >
-                  ログアウト
-                </button>
-              </div>
-            ) : (
-              <div className="w-28">
-                <LineLoginButton />
-              </div>
+            {isAuthenticated && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={navigateToProfileSettings}
+                className="flex items-center gap-1 mr-2"
+              >
+                <Settings size={16} />
+                <span className="hidden sm:inline">食事設定</span>
+              </Button>
             )}
+            <UserMenu />
           </div>
         </div>
         <div className="md:hidden text-center pb-4">
@@ -128,6 +91,20 @@ export default function Home() {
               <CalendarView onDateSelect={handleDateSelect} className="w-full" />
             </div>
             
+            {/* 食事設定ボタン - モバイル向け */}
+            {isAuthenticated && (
+              <div className="mt-4 sm:hidden flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={navigateToProfileSettings}
+                  className="flex items-center gap-2"
+                >
+                  <Settings size={16} />
+                  アレルギー・好き嫌い設定
+                </Button>
+              </div>
+            )}
+            
             {/* 予約完了メッセージ */}
             {reservationComplete && (
               <div className="mt-6 bg-green-50 border-l-4 border-green-500 p-4 rounded text-green-700">
@@ -143,7 +120,26 @@ export default function Home() {
                   <li>予約は3日前までにお願いします</li>
                   <li>キャンセルは前日12時まで可能です</li>
                   <li>食物アレルギーはメニュー予約時にご申告ください</li>
+                  <li>同じ日に既に予約されているメニューがある場合は、そのメニューのみ選択可能です</li>
+                  <li>柊人ママは同じ日に複数のメニューを作ることができないため、ご了承ください</li>
                 </ul>
+                
+                {/* 食事設定案内 */}
+                {isAuthenticated && (
+                  <div className="mt-3 pt-3 border-t border-blue-200">
+                    <p className="font-semibold">アレルギーや好き嫌いの設定</p>
+                    <p className="text-sm mt-1">
+                      アレルギーや好き嫌いの情報を登録しておくと、予約時に自動的に反映されます。
+                      <Button
+                        variant="link"
+                        onClick={navigateToProfileSettings}
+                        className="text-blue-700 p-0 h-auto font-semibold"
+                      >
+                        食事設定を行う
+                      </Button>
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
